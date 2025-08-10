@@ -1,0 +1,28 @@
+{
+  "name": "naukri-jwt",
+  "version": "1.0.0",
+  "description": "Express wrapper over Naukri APIs (login, fetch profile, update profile)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "NODE_ENV=development node src/server.js"
+  },
+  "keywords": [
+    "express",
+    "naukri",
+    "proxy",
+    "jwt"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
+
