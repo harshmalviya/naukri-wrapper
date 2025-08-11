@@ -155,6 +155,51 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+// Browser test endpoint - test if Puppeteer works at all
+app.get('/debug/browser-test', async (req, res) => {
+  const sessionId = Math.random().toString(36).substring(2, 8);
+  let browser;
+  
+  try {
+    console.log(`[${sessionId}] Testing browser functionality...`);
+    
+    const browserOptions = {
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      timeout: 30000
+    };
+    
+    browser = await puppeteer.launch(browserOptions);
+    const page = await browser.newPage();
+    
+    // Test basic functionality
+    await page.goto('data:text/html,<h1>Browser Test</h1><p>Time: ' + Date.now() + '</p>');
+    const title = await page.evaluate(() => document.querySelector('h1').textContent);
+    
+    // Take a test screenshot
+    const screenshotPath = await takeScreenshot(page, 'browser-test', sessionId);
+    
+    res.json({
+      success: true,
+      sessionId: sessionId,
+      title: title,
+      screenshotSaved: !!screenshotPath,
+      screenshotPath: screenshotPath
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      sessionId: sessionId,
+      error: error.message
+    });
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
+});
+
 // System debug endpoint
 app.get('/debug/system', (req, res) => {
   const screenshotDir = getScreenshotDir();
@@ -396,8 +441,17 @@ app.post('/auth/login-new', async (req, res) => {
   console.log(`[${sessionId}] Directory writable:`, fs.access ? 'checking...' : 'unknown');
 
   let browser;
+  
+  // Set overall timeout for the entire process
+  const overallTimeout = setTimeout(() => {
+    console.error(`[${sessionId}] Overall process timeout after 2 minutes`);
+    if (browser) {
+      browser.close().catch(console.error);
+    }
+  }, 120000); // 2 minutes
+  
   try {
-    // Launch browser in headless mode with stealth configuration
+    // Launch browser in headless mode with production-optimized configuration
     const browserOptions = {
       headless: true,
       args: [
@@ -412,8 +466,19 @@ app.post('/auth/login-new', async (req, res) => {
         '--no-first-run',
         '--disable-default-apps',
         '--single-process',
-        '--no-zygote'
-      ]
+        '--no-zygote',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-features=TranslateUI',
+        '--disable-ipc-flooding-protection',
+        '--enable-features=NetworkService,NetworkServiceLogging',
+        '--force-color-profile=srgb',
+        '--metrics-recording-only',
+        '--use-mock-keychain',
+        '--disable-background-networking'
+      ],
+      timeout: 60000 // Increase browser launch timeout
     };
 
     // Configure Chrome executable path for different environments
@@ -493,10 +558,37 @@ app.post('/auth/login-new', async (req, res) => {
     // Set viewport for consistent screenshots
     await page.setViewport({ width: 1280, height: 720 });
     
-    // Navigate to Naukri
+    // Test basic navigation first
+    console.log(`[${sessionId}] Testing basic navigation...`);
+    try {
+      await page.goto('data:text/html,<h1>Test Page</h1>', { waitUntil: 'domcontentloaded', timeout: 5000 });
+      console.log(`[${sessionId}] Basic navigation test passed`);
+    } catch (testError) {
+      console.error(`[${sessionId}] Basic navigation test failed:`, testError.message);
+      throw new Error(`Browser navigation not working: ${testError.message}`);
+    }
+    
+    // Navigate to Naukri with timeout and fallback
     console.log(`[${sessionId}] Navigating to naukri.com...`);
-    await page.goto('https://www.naukri.com/', { waitUntil: 'networkidle0' });
-    console.log(`[${sessionId}] Page loaded, current URL: ${page.url()}`);
+    try {
+      await page.goto('https://www.naukri.com/', { 
+        waitUntil: 'domcontentloaded', // Less strict than networkidle0
+        timeout: 30000 
+      });
+      console.log(`[${sessionId}] Page loaded, current URL: ${page.url()}`);
+      
+      // Wait a bit more for any dynamic content
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log(`[${sessionId}] Additional wait completed`);
+      
+    } catch (navigationError) {
+      console.error(`[${sessionId}] Navigation failed:`, navigationError.message);
+      console.log(`[${sessionId}] Current URL after failed navigation: ${page.url()}`);
+      
+      // Try to continue anyway and take screenshot to see what happened
+      await takeScreenshot(page, '01-navigation-failed', sessionId);
+      throw new Error(`Navigation failed: ${navigationError.message}`);
+    }
     
     // Take screenshot after page load
     await takeScreenshot(page, '01-pageload', sessionId);
@@ -565,14 +657,18 @@ app.post('/auth/login-new', async (req, res) => {
     res.json(sessionData);
     
   } catch (error) {
+    console.error(`[${sessionId}] Error in login automation:`, error.message);
     res.status(500).json({ 
       error: 'Browser automation login failed', 
       details: error.message,
       sessionId: sessionId
     });
   } finally {
+    clearTimeout(overallTimeout);
     if (browser) {
+      console.log(`[${sessionId}] Closing browser...`);
       await browser.close();
+      console.log(`[${sessionId}] Browser closed`);
     }
   }
 });
