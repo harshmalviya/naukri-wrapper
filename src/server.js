@@ -82,6 +82,79 @@ const takeScreenshot = async (page, step, sessionId) => {
   }
 };
 
+// Helper function to simulate human-like delays
+const humanDelay = (min = 1000, max = 3000) => {
+  const delay = Math.random() * (max - min) + min;
+  return new Promise(resolve => setTimeout(resolve, delay));
+};
+
+// Helper function to simulate human-like mouse movement and click
+const humanClick = async (page, selector, sessionId) => {
+  try {
+    console.log(`[${sessionId}] Looking for element: ${selector}`);
+    await page.waitForSelector(selector, { timeout: 10000 });
+    
+    const element = await page.$(selector);
+    if (!element) {
+      throw new Error(`Element not found: ${selector}`);
+    }
+    
+    // Get element position
+    const box = await element.boundingBox();
+    if (!box) {
+      throw new Error(`Element has no bounding box: ${selector}`);
+    }
+    
+    // Calculate random click position within element
+    const x = box.x + Math.random() * box.width;
+    const y = box.y + Math.random() * box.height;
+    
+    console.log(`[${sessionId}] Moving mouse to (${Math.round(x)}, ${Math.round(y)})`);
+    
+    // Move mouse to element with human-like movement
+    await page.mouse.move(x, y, { steps: 5 });
+    await humanDelay(200, 500);
+    
+    // Click with human-like timing
+    await page.mouse.click(x, y, { delay: Math.random() * 100 + 50 });
+    console.log(`[${sessionId}] Clicked element: ${selector}`);
+    
+    return true;
+  } catch (error) {
+    console.error(`[${sessionId}] Human click failed for ${selector}:`, error.message);
+    return false;
+  }
+};
+
+// Helper function to simulate human-like typing
+const humanType = async (page, selector, text, sessionId) => {
+  try {
+    console.log(`[${sessionId}] Typing into: ${selector}`);
+    await page.waitForSelector(selector, { timeout: 10000 });
+    
+    // Focus the element
+    await page.focus(selector);
+    await humanDelay(200, 500);
+    
+    // Clear existing text
+    await page.evaluate(sel => {
+      const element = document.querySelector(sel);
+      if (element) element.value = '';
+    }, selector);
+    
+    // Type with human-like delays between characters
+    for (const char of text) {
+      await page.type(selector, char, { delay: Math.random() * 150 + 50 });
+    }
+    
+    console.log(`[${sessionId}] Finished typing into: ${selector}`);
+    return true;
+  } catch (error) {
+    console.error(`[${sessionId}] Human type failed for ${selector}:`, error.message);
+    return false;
+  }
+};
+
 // Build hardcoded headers per CURLs (no cookies). Only variables are injected from inputs.
 const buildLoginHeaders = () => ({
   accept: 'application/json',
@@ -476,7 +549,19 @@ app.post('/auth/login-new', async (req, res) => {
         '--force-color-profile=srgb',
         '--metrics-recording-only',
         '--use-mock-keychain',
-        '--disable-background-networking'
+        '--disable-background-networking',
+        '--disable-client-side-phishing-detection',
+        '--disable-sync',
+        '--disable-features=VizDisplayCompositor,VizHitTestSurfaceLayer',
+        '--run-all-compositor-stages-before-draw',
+        '--disable-threaded-animation',
+        '--disable-threaded-scrolling',
+        '--disable-checker-imaging',
+        '--disable-new-content-rendering-timeout',
+        '--disable-image-animation-resync',
+        '--disable-partial-raster',
+        '--use-gl=swiftshader',
+        '--disable-software-rasterizer'
       ],
       timeout: 60000 // Increase browser launch timeout
     };
@@ -513,24 +598,68 @@ app.post('/auth/login-new', async (req, res) => {
     const page = await browser.newPage();
     console.log(`[${sessionId}] New page created`);
     
-    // Remove automation indicators
+    // Advanced stealth mode - remove ALL automation indicators
     await page.evaluateOnNewDocument(() => {
+      // Remove webdriver property
       Object.defineProperty(navigator, 'webdriver', {
         get: () => undefined,
       });
       
-      // Remove chrome automation extension
-      delete window.chrome.loadTimes;
-      delete window.chrome.csi;
+      // Remove chrome automation properties
+      if (window.chrome) {
+        delete window.chrome.loadTimes;
+        delete window.chrome.csi;
+        delete window.chrome.app;
+        delete window.chrome.runtime;
+      }
       
-      // Spoof plugins
+      // Spoof plugins with realistic data
       Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5],
+        get: () => [
+          {
+            0: {type: "application/x-google-chrome-pdf", suffixes: "pdf", description: "Portable Document Format", enabledPlugin: null},
+            description: "Portable Document Format",
+            filename: "internal-pdf-viewer",
+            length: 1,
+            name: "Chrome PDF Plugin"
+          },
+          {
+            0: {type: "application/pdf", suffixes: "pdf", description: "Portable Document Format", enabledPlugin: null},
+            description: "Portable Document Format", 
+            filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",
+            length: 1,
+            name: "Chrome PDF Viewer"
+          }
+        ],
       });
       
-      // Spoof languages
+      // Spoof languages realistically
       Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-US', 'en'],
+        get: () => ['en-US', 'en', 'en-GB'],
+      });
+      
+      // Spoof platform
+      Object.defineProperty(navigator, 'platform', {
+        get: () => 'Win32',
+      });
+      
+      // Spoof hardware concurrency
+      Object.defineProperty(navigator, 'hardwareConcurrency', {
+        get: () => 4,
+      });
+      
+      // Spoof memory
+      Object.defineProperty(navigator, 'deviceMemory', {
+        get: () => 8,
+      });
+      
+      // Spoof connection
+      Object.defineProperty(navigator, 'connection', {
+        get: () => ({
+          effectiveType: '4g',
+          rtt: 100,
+          downlink: 2.0
+        }),
       });
       
       // Spoof permissions
@@ -540,6 +669,38 @@ app.post('/auth/login-new', async (req, res) => {
           Promise.resolve({ state: 'granted' }) :
           originalQuery(parameters)
       );
+      
+      // Spoof screen properties
+      Object.defineProperty(screen, 'width', { get: () => 1920 });
+      Object.defineProperty(screen, 'height', { get: () => 1080 });
+      Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
+      Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
+      Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+      Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
+      
+      // Override toString methods to hide automation
+      const originalToString = Function.prototype.toString;
+      Function.prototype.toString = function() {
+        if (this === navigator.webdriver) {
+          return 'function webdriver() { [native code] }';
+        }
+        return originalToString.call(this);
+      };
+      
+      // Add mouse and touch events
+      ['mousedown', 'mouseup', 'mousemove', 'click', 'touchstart', 'touchend', 'touchmove'].forEach(eventType => {
+        document.addEventListener(eventType, () => {}, true);
+      });
+      
+      // Spoof getBattery
+      if (navigator.getBattery) {
+        navigator.getBattery = () => Promise.resolve({
+          charging: true,
+          chargingTime: 0,
+          dischargingTime: Infinity,
+          level: 1
+        });
+      }
     });
     
     // Set realistic user agent
@@ -555,8 +716,8 @@ app.post('/auth/login-new', async (req, res) => {
       'Upgrade-Insecure-Requests': '1',
     });
     
-    // Set viewport for consistent screenshots
-    await page.setViewport({ width: 1280, height: 720 });
+    // Set realistic viewport (common laptop resolution)
+    await page.setViewport({ width: 1366, height: 768 });
     
     // Test basic navigation first
     console.log(`[${sessionId}] Testing basic navigation...`);
@@ -568,24 +729,30 @@ app.post('/auth/login-new', async (req, res) => {
       throw new Error(`Browser navigation not working: ${testError.message}`);
     }
     
-    // Navigate to Naukri with timeout and fallback
+    // Navigate to Naukri with human-like behavior
     console.log(`[${sessionId}] Navigating to naukri.com...`);
     try {
       await page.goto('https://www.naukri.com/', { 
-        waitUntil: 'domcontentloaded', // Less strict than networkidle0
+        waitUntil: 'domcontentloaded',
         timeout: 30000 
       });
       console.log(`[${sessionId}] Page loaded, current URL: ${page.url()}`);
       
-      // Wait a bit more for any dynamic content
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      console.log(`[${sessionId}] Additional wait completed`);
+      // Simulate human reading/browsing behavior
+      await humanDelay(2000, 4000);
+      
+      // Simulate some mouse movements to appear more human
+      await page.mouse.move(100, 100);
+      await humanDelay(500, 1000);
+      await page.mouse.move(300, 200);
+      await humanDelay(500, 1000);
+      
+      console.log(`[${sessionId}] Human-like browsing simulation completed`);
       
     } catch (navigationError) {
       console.error(`[${sessionId}] Navigation failed:`, navigationError.message);
       console.log(`[${sessionId}] Current URL after failed navigation: ${page.url()}`);
       
-      // Try to continue anyway and take screenshot to see what happened
       await takeScreenshot(page, '01-navigation-failed', sessionId);
       throw new Error(`Navigation failed: ${navigationError.message}`);
     }
@@ -593,43 +760,65 @@ app.post('/auth/login-new', async (req, res) => {
     // Take screenshot after page load
     await takeScreenshot(page, '01-pageload', sessionId);
     
-    // Click on "Jobseeker Login" link with title="Jobseeker Login" and innerHTML "Login"
-    await page.click('a[title="Jobseeker Login"]');
+    // Human-like click on "Jobseeker Login" link
+    console.log(`[${sessionId}] Looking for login link...`);
+    const loginClicked = await humanClick(page, 'a[title="Jobseeker Login"]', sessionId);
+    if (!loginClicked) {
+      throw new Error('Could not click on Jobseeker Login link');
+    }
     
-    // Wait for dialog to open
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Human-like wait for dialog to open
+    await humanDelay(1500, 2500);
     
     // Take screenshot after clicking login link
     await takeScreenshot(page, '02-after-click', sessionId);
     
-    // Find form rows and fill inputs
+    // Find and fill username field with human-like behavior
+    console.log(`[${sessionId}] Looking for form fields...`);
     const formRows = await page.$$('.form-row');
     
     if (formRows.length < 2) {
       throw new Error('Could not find username and password form fields');
     }
     
-    // Fill username (first form-row)
+    // Fill username with human-like typing
     const usernameInput = await formRows[0].$('input');
     if (usernameInput) {
-      await usernameInput.type(username);
+      const usernameSelector = '.form-row:first-child input';
+      const usernameTyped = await humanType(page, usernameSelector, username, sessionId);
+      if (!usernameTyped) {
+        throw new Error('Could not type username');
+      }
     } else {
       throw new Error('Could not find username input field');
     }
     
-    // Fill password (second form-row)  
+    // Human-like delay between fields
+    await humanDelay(500, 1500);
+    
+    // Fill password with human-like typing
     const passwordInput = await formRows[1].$('input');
     if (passwordInput) {
-      await passwordInput.type(password);
+      const passwordSelector = '.form-row:nth-child(2) input';
+      const passwordTyped = await humanType(page, passwordSelector, password, sessionId);
+      if (!passwordTyped) {
+        throw new Error('Could not type password');
+      }
     } else {
       throw new Error('Could not find password input field');
     }
     
+    // Human-like delay before clicking login
+    await humanDelay(1000, 2000);
+    
     // Take screenshot before clicking login button
     await takeScreenshot(page, '03-before-login', sessionId);
     
-    // Click login button
-    await page.click('button.btn-primary.loginButton');
+    // Human-like click on login button
+    const loginButtonClicked = await humanClick(page, 'button.btn-primary.loginButton', sessionId);
+    if (!loginButtonClicked) {
+      throw new Error('Could not click login button');
+    }
     
     // Wait for login to complete - look for redirect or success indicators
     await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 });
