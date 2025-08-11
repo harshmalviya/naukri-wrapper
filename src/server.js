@@ -173,7 +173,7 @@ app.post('/auth/login-new', async (req, res) => {
   let browser;
   try {
     // Launch browser in headless mode with stealth configuration
-    browser = await puppeteer.launch({ 
+    const browserOptions = {
       headless: true,
       args: [
         '--no-sandbox',
@@ -185,9 +185,34 @@ app.post('/auth/login-new', async (req, res) => {
         '--disable-blink-features=AutomationControlled',
         '--disable-extensions',
         '--no-first-run',
-        '--disable-default-apps'
+        '--disable-default-apps',
+        '--single-process',
+        '--no-zygote'
       ]
-    });
+    };
+
+    // Use system Chrome on Render if available
+    if (process.env.NODE_ENV === 'production') {
+      // Try multiple possible Chrome paths on Render
+      const possiblePaths = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux*/chrome',
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium'
+      ];
+      
+      for (const chromePath of possiblePaths) {
+        if (chromePath && fs.existsSync(chromePath.replace('*', ''))) {
+          browserOptions.executablePath = chromePath;
+          console.log(`Using Chrome at: ${chromePath}`);
+          break;
+        }
+      }
+    }
+
+    browser = await puppeteer.launch(browserOptions);
     
     const page = await browser.newPage();
     
