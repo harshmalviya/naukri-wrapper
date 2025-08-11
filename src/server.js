@@ -30,7 +30,7 @@ const PORT = process.env.PORT || 3000;
 // Function to clean up old screenshots (older than 1 day)
 const cleanupOldScreenshots = () => {
   try {
-    const screenshotDir = __dirname.replace('/src', ''); // Project root
+    const screenshotDir = getScreenshotDir();
     const files = fs.readdirSync(screenshotDir);
     const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000); // 24 hours in milliseconds
     
@@ -54,6 +54,32 @@ const cleanupOldScreenshots = () => {
 const generateScreenshotName = (step, sessionId) => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   return `debug-${sessionId}-${step}-${timestamp}.png`;
+};
+
+// Get appropriate directory for screenshots based on environment
+const getScreenshotDir = () => {
+  if (process.env.NODE_ENV === 'production') {
+    // On Render, use /tmp directory which is writable
+    return '/tmp';
+  } else {
+    // Local development - use project root
+    return __dirname.replace('/src', '');
+  }
+};
+
+// Helper function to take screenshots with error handling
+const takeScreenshot = async (page, step, sessionId) => {
+  try {
+    const screenshotDir = getScreenshotDir();
+    const screenshotPath = path.join(screenshotDir, generateScreenshotName(step, sessionId));
+    console.log(`[${sessionId}] Taking screenshot ${step}: ${screenshotPath}`);
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    console.log(`[${sessionId}] Screenshot ${step} saved successfully`);
+    return screenshotPath;
+  } catch (screenshotError) {
+    console.error(`[${sessionId}] Screenshot ${step} failed:`, screenshotError.message);
+    return null;
+  }
 };
 
 // Build hardcoded headers per CURLs (no cookies). Only variables are injected from inputs.
@@ -129,6 +155,55 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+// System debug endpoint
+app.get('/debug/system', (req, res) => {
+  const screenshotDir = getScreenshotDir();
+  
+  try {
+    // Check directory permissions
+    const dirExists = fs.existsSync(screenshotDir);
+    let canWrite = false;
+    let dirContents = [];
+    
+    if (dirExists) {
+      try {
+        fs.accessSync(screenshotDir, fs.constants.W_OK);
+        canWrite = true;
+        dirContents = fs.readdirSync(screenshotDir).filter(f => f.startsWith('debug-'));
+      } catch (err) {
+        canWrite = false;
+      }
+    }
+    
+    res.json({
+      environment: process.env.NODE_ENV || 'development',
+      screenshotDirectory: screenshotDir,
+      directoryExists: dirExists,
+      canWrite: canWrite,
+      existingScreenshots: dirContents.length,
+      screenshots: dirContents.slice(0, 10), // Show first 10
+      platform: process.platform,
+      nodeVersion: process.version,
+      workingDirectory: process.cwd(),
+      tmpDirectory: '/tmp',
+      tmpExists: fs.existsSync('/tmp'),
+      tmpWritable: (() => {
+        try {
+          fs.accessSync('/tmp', fs.constants.W_OK);
+          return true;
+        } catch {
+          return false;
+        }
+      })()
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'System check failed',
+      details: error.message
+    });
+  }
+});
+
 // GET /debug/screenshots/:sessionId - View screenshots for a specific session
 app.get('/debug/screenshots/:sessionId', (req, res) => {
   const { sessionId } = req.params;
@@ -138,7 +213,7 @@ app.get('/debug/screenshots/:sessionId', (req, res) => {
   }
   
   try {
-    const screenshotDir = __dirname.replace('/src', ''); // Project root
+    const screenshotDir = getScreenshotDir();
     const files = fs.readdirSync(screenshotDir);
     
     // Find all screenshots for this session
@@ -194,7 +269,7 @@ app.get('/debug/screenshot/:filename', (req, res) => {
   }
   
   try {
-    const screenshotDir = __dirname.replace('/src', ''); // Project root
+    const screenshotDir = getScreenshotDir();
     const filePath = path.join(screenshotDir, filename);
     
     if (!fs.existsSync(filePath)) {
@@ -222,7 +297,7 @@ app.get('/debug/view/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
   
   try {
-    const screenshotDir = __dirname.replace('/src', ''); // Project root
+    const screenshotDir = getScreenshotDir();
     const files = fs.readdirSync(screenshotDir);
     
     // Find all screenshots for this session
@@ -313,6 +388,12 @@ app.post('/auth/login-new', async (req, res) => {
   
   // Generate unique session ID for this login attempt
   const sessionId = Math.random().toString(36).substring(2, 8);
+  
+  // Log debugging information
+  console.log(`[${sessionId}] Starting login automation`);
+  console.log(`[${sessionId}] Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`[${sessionId}] Screenshot directory: ${getScreenshotDir()}`);
+  console.log(`[${sessionId}] Directory writable:`, fs.access ? 'checking...' : 'unknown');
 
   let browser;
   try {
@@ -360,9 +441,12 @@ app.post('/auth/login-new', async (req, res) => {
       console.log('Using locally installed Puppeteer Chrome');
     }
 
+    console.log(`[${sessionId}] Launching browser...`);
     browser = await puppeteer.launch(browserOptions);
+    console.log(`[${sessionId}] Browser launched successfully`);
     
     const page = await browser.newPage();
+    console.log(`[${sessionId}] New page created`);
     
     // Remove automation indicators
     await page.evaluateOnNewDocument(() => {
@@ -410,10 +494,12 @@ app.post('/auth/login-new', async (req, res) => {
     await page.setViewport({ width: 1280, height: 720 });
     
     // Navigate to Naukri
+    console.log(`[${sessionId}] Navigating to naukri.com...`);
     await page.goto('https://www.naukri.com/', { waitUntil: 'networkidle0' });
+    console.log(`[${sessionId}] Page loaded, current URL: ${page.url()}`);
     
     // Take screenshot after page load
-    await page.screenshot({ path: generateScreenshotName('01-pageload', sessionId), fullPage: true });
+    await takeScreenshot(page, '01-pageload', sessionId);
     
     // Click on "Jobseeker Login" link with title="Jobseeker Login" and innerHTML "Login"
     await page.click('a[title="Jobseeker Login"]');
@@ -422,7 +508,7 @@ app.post('/auth/login-new', async (req, res) => {
     await new Promise(resolve => setTimeout(resolve, 1000));
     
     // Take screenshot after clicking login link
-    await page.screenshot({ path: generateScreenshotName('02-after-click', sessionId), fullPage: true });
+    await takeScreenshot(page, '02-after-click', sessionId);
     
     // Find form rows and fill inputs
     const formRows = await page.$$('.form-row');
@@ -448,7 +534,7 @@ app.post('/auth/login-new', async (req, res) => {
     }
     
     // Take screenshot before clicking login button
-    await page.screenshot({ path: generateScreenshotName('03-before-login', sessionId), fullPage: true });
+    await takeScreenshot(page, '03-before-login', sessionId);
     
     // Click login button
     await page.click('button.btn-primary.loginButton');
@@ -457,7 +543,7 @@ app.post('/auth/login-new', async (req, res) => {
     await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 });
     
     // Take screenshot after login
-    await page.screenshot({ path: generateScreenshotName('04-after-login', sessionId), fullPage: true });
+    await takeScreenshot(page, '04-after-login', sessionId);
     
     // Get cookies and current URL from the logged-in session
     const cookies = await page.cookies();
