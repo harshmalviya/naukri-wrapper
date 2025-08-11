@@ -129,6 +129,150 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+// GET /debug/screenshots/:sessionId - View screenshots for a specific session
+app.get('/debug/screenshots/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  
+  if (!sessionId) {
+    return res.status(400).json({ error: 'Session ID is required' });
+  }
+  
+  try {
+    const screenshotDir = __dirname.replace('/src', ''); // Project root
+    const files = fs.readdirSync(screenshotDir);
+    
+    // Find all screenshots for this session
+    const sessionScreenshots = files
+      .filter(file => file.startsWith(`debug-${sessionId}-`) && file.endsWith('.png'))
+      .sort()
+      .map(file => {
+        const filePath = path.join(screenshotDir, file);
+        const stats = fs.statSync(filePath);
+        
+        // Extract step info from filename
+        const stepMatch = file.match(/debug-.*?-(.*?)-\d{4}/);
+        const step = stepMatch ? stepMatch[1] : 'unknown';
+        
+        return {
+          filename: file,
+          step: step,
+          size: stats.size,
+          created: stats.mtime,
+          url: `/debug/screenshot/${file}`
+        };
+      });
+    
+    if (sessionScreenshots.length === 0) {
+      return res.json({ 
+        sessionId,
+        message: 'No screenshots found for this session',
+        screenshots: []
+      });
+    }
+    
+    res.json({
+      sessionId,
+      message: `Found ${sessionScreenshots.length} screenshots`,
+      screenshots: sessionScreenshots
+    });
+    
+  } catch (error) {
+    res.status(500).json({ 
+      error: 'Failed to list screenshots', 
+      details: error.message 
+    });
+  }
+});
+
+// GET /debug/screenshot/:filename - Serve individual screenshot file
+app.get('/debug/screenshot/:filename', (req, res) => {
+  const { filename } = req.params;
+  
+  // Validate filename to prevent path traversal
+  if (!filename || !filename.match(/^debug-.*\.png$/)) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  
+  try {
+    const screenshotDir = __dirname.replace('/src', ''); // Project root
+    const filePath = path.join(screenshotDir, filename);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Screenshot not found' });
+    }
+    
+    // Set proper headers for image
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+    
+  } catch (error) {
+    res.status(500).json({ 
+      error: 'Failed to serve screenshot', 
+      details: error.message 
+    });
+  }
+});
+
+// GET /debug/view/:sessionId - HTML interface to view screenshots
+app.get('/debug/view/:sessionId', async (req, res) => {
+  const { sessionId } = req.params;
+  
+  try {
+    const screenshotDir = __dirname.replace('/src', ''); // Project root
+    const files = fs.readdirSync(screenshotDir);
+    
+    // Find all screenshots for this session
+    const sessionScreenshots = files
+      .filter(file => file.startsWith(`debug-${sessionId}-`) && file.endsWith('.png'))
+      .sort()
+      .map(file => {
+        const stepMatch = file.match(/debug-.*?-(.*?)-\d{4}/);
+        const step = stepMatch ? stepMatch[1] : 'unknown';
+        return { filename: file, step: step };
+      });
+    
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Screenshots - Session ${sessionId}</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .screenshot { margin: 20px 0; padding: 20px; border: 1px solid #ddd; }
+        .screenshot h3 { margin-top: 0; }
+        .screenshot img { max-width: 100%; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+    <h1>Debug Screenshots - Session: ${sessionId}</h1>
+    ${sessionScreenshots.length === 0 ? 
+      '<p>No screenshots found for this session.</p>' : 
+      sessionScreenshots.map(screenshot => `
+        <div class="screenshot">
+          <h3>Step: ${screenshot.step}</h3>
+          <p>Filename: ${screenshot.filename}</p>
+          <img src="/debug/screenshot/${screenshot.filename}" alt="${screenshot.step}" />
+        </div>
+      `).join('')
+    }
+</body>
+</html>`;
+    
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+    
+  } catch (error) {
+    res.status(500).json({ 
+      error: 'Failed to generate debug view', 
+      details: error.message 
+    });
+  }
+});
+
 // POST /auth/login
 // Body: { username: string, password: string }
 app.post('/auth/login', async (req, res) => {
@@ -191,7 +335,7 @@ app.post('/auth/login-new', async (req, res) => {
       ]
     };
 
-    // Use system Chrome on Render if available
+    // Configure Chrome executable path for different environments
     if (process.env.NODE_ENV === 'production') {
       // Try multiple possible Chrome paths on Render
       const possiblePaths = [
@@ -210,6 +354,10 @@ app.post('/auth/login-new', async (req, res) => {
           break;
         }
       }
+    } else {
+      // For local development, let Puppeteer find the installed Chrome
+      // The npx puppeteer browsers install chrome command should handle this
+      console.log('Using locally installed Puppeteer Chrome');
     }
 
     browser = await puppeteer.launch(browserOptions);
@@ -333,7 +481,8 @@ app.post('/auth/login-new', async (req, res) => {
   } catch (error) {
     res.status(500).json({ 
       error: 'Browser automation login failed', 
-      details: error.message 
+      details: error.message,
+      sessionId: sessionId
     });
   } finally {
     if (browser) {
