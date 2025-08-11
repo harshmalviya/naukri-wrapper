@@ -88,6 +88,35 @@ const humanDelay = (min = 1000, max = 3000) => {
   return new Promise(resolve => setTimeout(resolve, delay));
 };
 
+// Helper function to execute page actions with frame detachment protection
+const safePageAction = async (action, sessionId, actionName, maxRetries = 3) => {
+  let attempts = 0;
+  while (attempts < maxRetries) {
+    try {
+      attempts++;
+      console.log(`[${sessionId}] Executing ${actionName} (attempt ${attempts}/${maxRetries})`);
+      return await action();
+    } catch (error) {
+      console.error(`[${sessionId}] ${actionName} failed (attempt ${attempts}):`, error.message);
+      
+      if (error.message.includes('detached') || 
+          error.message.includes('Target closed') ||
+          error.message.includes('Protocol error')) {
+        
+        if (attempts < maxRetries) {
+          console.log(`[${sessionId}] Frame/target issue detected, waiting before retry...`);
+          await humanDelay(2000, 4000);
+        } else {
+          throw new Error(`${actionName} failed after ${maxRetries} attempts due to frame detachment: ${error.message}`);
+        }
+      } else {
+        // Non-frame related error, don't retry
+        throw error;
+      }
+    }
+  }
+};
+
 // Helper function to simulate human-like mouse movement and click
 const humanClick = async (page, selector, sessionId, timeout = 20000) => {
   try {
@@ -576,7 +605,7 @@ app.post('/auth/login-new', async (req, res) => {
   }, 120000); // 2 minutes
   
   try {
-    // Launch browser in headless mode with production-optimized configuration
+    // Launch browser with frame-detachment resistant configuration
     const browserOptions = {
       headless: true,
       args: [
@@ -590,8 +619,7 @@ app.post('/auth/login-new', async (req, res) => {
         '--disable-extensions',
         '--no-first-run',
         '--disable-default-apps',
-        '--single-process',
-        '--no-zygote',
+        // Remove problematic single-process and no-zygote flags that can cause frame issues
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',
@@ -613,9 +641,17 @@ app.post('/auth/login-new', async (req, res) => {
         '--disable-image-animation-resync',
         '--disable-partial-raster',
         '--use-gl=swiftshader',
-        '--disable-software-rasterizer'
+        '--disable-software-rasterizer',
+        // Additional stability flags
+        '--disable-features=site-per-process',
+        '--disable-site-isolation-trials',
+        '--disable-features=VizDisplayCompositor',
+        '--disable-frame-rate-limit'
       ],
-      timeout: 60000 // Increase browser launch timeout
+      timeout: 60000,
+      // Add page error handling
+      ignoreDefaultArgs: ['--disable-extensions'],
+      defaultViewport: null
     };
 
     // Configure Chrome executable path for different environments
@@ -649,6 +685,23 @@ app.post('/auth/login-new', async (req, res) => {
     
     const page = await browser.newPage();
     console.log(`[${sessionId}] New page created`);
+    
+    // Add error handlers for page-level issues
+    page.on('error', (error) => {
+      console.error(`[${sessionId}] Page error:`, error.message);
+    });
+    
+    page.on('pageerror', (error) => {
+      console.error(`[${sessionId}] Page JavaScript error:`, error.message);
+    });
+    
+    page.on('framedetached', (frame) => {
+      console.log(`[${sessionId}] Frame detached:`, frame.url());
+    });
+    
+    page.on('framenavigated', (frame) => {
+      console.log(`[${sessionId}] Frame navigated to:`, frame.url());
+    });
     
     // Advanced stealth mode - remove ALL automation indicators
     await page.evaluateOnNewDocument(() => {
@@ -781,41 +834,78 @@ app.post('/auth/login-new', async (req, res) => {
       throw new Error(`Browser navigation not working: ${testError.message}`);
     }
     
-    // Navigate to Naukri with human-like behavior
+    // Navigate to Naukri with robust error handling
     console.log(`[${sessionId}] Navigating to naukri.com...`);
-    try {
-      await page.goto('https://www.naukri.com/', { 
-        waitUntil: 'networkidle2', // Wait for network to be mostly idle
-        timeout: 45000 
-      });
-      console.log(`[${sessionId}] Page loaded, current URL: ${page.url()}`);
-      
-      // Wait for page to be fully interactive
-      console.log(`[${sessionId}] Waiting for page to be interactive...`);
-      await page.waitForFunction(
-        () => document.readyState === 'complete',
-        { timeout: 15000 }
-      );
-      
-      // Simulate human reading/browsing behavior
-      await humanDelay(2000, 4000);
-      
-      // Simulate some mouse movements to appear more human
-      await page.mouse.move(100, 100);
-      await humanDelay(500, 1000);
-      await page.mouse.move(300, 200);
-      await humanDelay(500, 1000);
-      await page.mouse.move(500, 300);
-      await humanDelay(500, 1000);
-      
-      console.log(`[${sessionId}] Human-like browsing simulation completed`);
-      
-    } catch (navigationError) {
-      console.error(`[${sessionId}] Navigation failed:`, navigationError.message);
-      console.log(`[${sessionId}] Current URL after failed navigation: ${page.url()}`);
-      
-      await takeScreenshot(page, '01-navigation-failed', sessionId);
-      throw new Error(`Navigation failed: ${navigationError.message}`);
+    let navigationAttempts = 0;
+    const maxAttempts = 3;
+    
+    while (navigationAttempts < maxAttempts) {
+      try {
+        navigationAttempts++;
+        console.log(`[${sessionId}] Navigation attempt ${navigationAttempts}/${maxAttempts}`);
+        
+        // Try different wait strategies based on attempt
+        const waitStrategy = navigationAttempts === 1 ? 'networkidle2' : 
+                           navigationAttempts === 2 ? 'domcontentloaded' : 'load';
+        
+        await page.goto('https://www.naukri.com/', { 
+          waitUntil: waitStrategy,
+          timeout: 30000 
+        });
+        
+        console.log(`[${sessionId}] Page loaded, current URL: ${page.url()}`);
+        
+        // Verify we're on the right page
+        const currentUrl = page.url();
+        if (!currentUrl.includes('naukri.com')) {
+          throw new Error(`Unexpected redirect to: ${currentUrl}`);
+        }
+        
+        // Wait for page to be fully interactive with retry logic
+        console.log(`[${sessionId}] Waiting for page to be interactive...`);
+        let retries = 3;
+        while (retries > 0) {
+          try {
+            await page.waitForFunction(
+              () => document.readyState === 'complete' && window.jQuery,
+              { timeout: 10000 }
+            );
+            break;
+          } catch (e) {
+            retries--;
+            if (retries === 0) {
+              console.log(`[${sessionId}] Page readiness check failed, continuing anyway`);
+            } else {
+              await humanDelay(1000, 2000);
+            }
+          }
+        }
+        
+        // Simulate human reading/browsing behavior
+        await humanDelay(2000, 4000);
+        
+        // Simulate some mouse movements to appear more human
+        await page.mouse.move(100, 100);
+        await humanDelay(500, 1000);
+        await page.mouse.move(300, 200);
+        await humanDelay(500, 1000);
+        await page.mouse.move(500, 300);
+        await humanDelay(500, 1000);
+        
+        console.log(`[${sessionId}] Navigation successful, human-like browsing completed`);
+        break; // Success, exit the retry loop
+        
+      } catch (navigationError) {
+        console.error(`[${sessionId}] Navigation attempt ${navigationAttempts} failed:`, navigationError.message);
+        
+        if (navigationAttempts === maxAttempts) {
+          await takeScreenshot(page, '01-navigation-failed', sessionId);
+          throw new Error(`Navigation failed after ${maxAttempts} attempts: ${navigationError.message}`);
+        } else {
+          console.log(`[${sessionId}] Retrying navigation in 2 seconds...`);
+          await humanDelay(2000, 3000);
+        }
+      }
     }
     
     // Take screenshot after page load
@@ -1009,11 +1099,68 @@ app.post('/auth/login-new', async (req, res) => {
       throw new Error('Could not find login button');
     }
     
-    // Wait for login to complete - look for redirect or success indicators
-    await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 });
+    // Wait for login to complete with robust error handling
+    console.log(`[${sessionId}] Waiting for login to complete...`);
+    let loginSuccess = false;
     
-    // Take screenshot after login
+    try {
+      // Try to wait for navigation first
+      await page.waitForNavigation({ 
+        waitUntil: 'domcontentloaded', 
+        timeout: 20000 
+      });
+      loginSuccess = true;
+      console.log(`[${sessionId}] Navigation detected after login`);
+    } catch (navError) {
+      console.log(`[${sessionId}] No navigation detected, checking for other success indicators...`);
+      
+      // Check if we're still on the same page but login succeeded
+      await humanDelay(3000, 5000);
+      
+      try {
+        // Look for success indicators without navigation
+        const successIndicators = [
+          '.user-name',
+          '.profile-name',
+          '.user-profile',
+          '[data-test="profile-menu"]',
+          '.profile-dropdown',
+          '.logout-link',
+          '.user-menu'
+        ];
+        
+        for (const indicator of successIndicators) {
+          const element = await page.$(indicator);
+          if (element) {
+            console.log(`[${sessionId}] Login success indicator found: ${indicator}`);
+            loginSuccess = true;
+            break;
+          }
+        }
+        
+        // Check if login dialog disappeared (another success indicator)
+        const loginDialog = await page.$('.login-form, .modal-body, .form-row');
+        if (!loginDialog) {
+          console.log(`[${sessionId}] Login dialog disappeared - likely successful`);
+          loginSuccess = true;
+        }
+        
+      } catch (checkError) {
+        console.log(`[${sessionId}] Error checking login success: ${checkError.message}`);
+      }
+    }
+    
+    // Take screenshot after login attempt
     await takeScreenshot(page, '04-after-login', sessionId);
+    
+    // Final URL and success check
+    const finalUrl = page.url();
+    console.log(`[${sessionId}] Final URL after login: ${finalUrl}`);
+    
+    if (!loginSuccess && finalUrl.includes('naukri.com') && !finalUrl.includes('login')) {
+      console.log(`[${sessionId}] URL changed from login page - considering successful`);
+      loginSuccess = true;
+    }
     
     // Get cookies and current URL from the logged-in session
     const cookies = await page.cookies();
