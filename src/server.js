@@ -89,10 +89,10 @@ const humanDelay = (min = 1000, max = 3000) => {
 };
 
 // Helper function to simulate human-like mouse movement and click
-const humanClick = async (page, selector, sessionId) => {
+const humanClick = async (page, selector, sessionId, timeout = 20000) => {
   try {
     console.log(`[${sessionId}] Looking for element: ${selector}`);
-    await page.waitForSelector(selector, { timeout: 10000 });
+    await page.waitForSelector(selector, { timeout });
     
     const element = await page.$(selector);
     if (!element) {
@@ -126,11 +126,27 @@ const humanClick = async (page, selector, sessionId) => {
   }
 };
 
+// Helper function to try multiple selectors for an element
+const findAndClickElement = async (page, selectors, sessionId, timeout = 20000) => {
+  for (const selector of selectors) {
+    try {
+      console.log(`[${sessionId}] Trying selector: ${selector}`);
+      const success = await humanClick(page, selector, sessionId, timeout);
+      if (success) {
+        return true;
+      }
+    } catch (error) {
+      console.log(`[${sessionId}] Selector ${selector} failed, trying next...`);
+    }
+  }
+  return false;
+};
+
 // Helper function to simulate human-like typing
-const humanType = async (page, selector, text, sessionId) => {
+const humanType = async (page, selector, text, sessionId, timeout = 15000) => {
   try {
     console.log(`[${sessionId}] Typing into: ${selector}`);
-    await page.waitForSelector(selector, { timeout: 10000 });
+    await page.waitForSelector(selector, { timeout });
     
     // Focus the element
     await page.focus(selector);
@@ -733,10 +749,17 @@ app.post('/auth/login-new', async (req, res) => {
     console.log(`[${sessionId}] Navigating to naukri.com...`);
     try {
       await page.goto('https://www.naukri.com/', { 
-        waitUntil: 'domcontentloaded',
-        timeout: 30000 
+        waitUntil: 'networkidle2', // Wait for network to be mostly idle
+        timeout: 45000 
       });
       console.log(`[${sessionId}] Page loaded, current URL: ${page.url()}`);
+      
+      // Wait for page to be fully interactive
+      console.log(`[${sessionId}] Waiting for page to be interactive...`);
+      await page.waitForFunction(
+        () => document.readyState === 'complete',
+        { timeout: 15000 }
+      );
       
       // Simulate human reading/browsing behavior
       await humanDelay(2000, 4000);
@@ -745,6 +768,8 @@ app.post('/auth/login-new', async (req, res) => {
       await page.mouse.move(100, 100);
       await humanDelay(500, 1000);
       await page.mouse.move(300, 200);
+      await humanDelay(500, 1000);
+      await page.mouse.move(500, 300);
       await humanDelay(500, 1000);
       
       console.log(`[${sessionId}] Human-like browsing simulation completed`);
@@ -760,10 +785,43 @@ app.post('/auth/login-new', async (req, res) => {
     // Take screenshot after page load
     await takeScreenshot(page, '01-pageload', sessionId);
     
-    // Human-like click on "Jobseeker Login" link
+    // Wait a bit more for dynamic content to load
+    console.log(`[${sessionId}] Waiting for page to fully load...`);
+    await humanDelay(3000, 5000);
+    
+    // Try multiple selectors for the login link
     console.log(`[${sessionId}] Looking for login link...`);
-    const loginClicked = await humanClick(page, 'a[title="Jobseeker Login"]', sessionId);
+    const loginSelectors = [
+      'a[title="Jobseeker Login"]',
+      'a[title*="Login"]',
+      '.login-link',
+      '.jobseeker-login',
+      'a[href*="login"]',
+      'a:contains("Login")',
+      '.header-login a',
+      '.nav-login'
+    ];
+    
+    const loginClicked = await findAndClickElement(page, loginSelectors, sessionId, 30000);
     if (!loginClicked) {
+      // Take a screenshot to see what's on the page
+      await takeScreenshot(page, '01-login-link-not-found', sessionId);
+      
+      // Try to find any login-related elements for debugging
+      const loginElements = await page.$$eval('a', elements => 
+        elements.map(el => ({
+          text: el.textContent.trim(),
+          title: el.title,
+          href: el.href,
+          className: el.className
+        })).filter(el => 
+          el.text.toLowerCase().includes('login') || 
+          el.title.toLowerCase().includes('login') ||
+          el.href.toLowerCase().includes('login')
+        )
+      );
+      
+      console.log(`[${sessionId}] Found login-related elements:`, JSON.stringify(loginElements, null, 2));
       throw new Error('Could not click on Jobseeker Login link');
     }
     
