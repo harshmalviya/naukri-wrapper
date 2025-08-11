@@ -605,53 +605,72 @@ app.post('/auth/login-new', async (req, res) => {
   }, 120000); // 2 minutes
   
   try {
-    // Launch browser with frame-detachment resistant configuration
+    // Launch browser with Python Selenium equivalent configuration
     const browserOptions = {
       headless: true,
+      // Python Selenium equivalent chrome options
       args: [
+        // Basic security and sandbox options (equivalent to Python ChromeOptions)
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
+        
+        // GPU and rendering options (common in Python Selenium configs)
         '--disable-gpu',
-        '--disable-web-security',
-        '--disable-features=VizDisplayCompositor',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-extensions',
-        '--no-first-run',
-        '--disable-default-apps',
-        // Remove problematic single-process and no-zygote flags that can cause frame issues
+        '--disable-software-rasterizer',
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',
-        '--disable-features=TranslateUI',
-        '--disable-ipc-flooding-protection',
-        '--enable-features=NetworkService,NetworkServiceLogging',
-        '--force-color-profile=srgb',
-        '--metrics-recording-only',
-        '--use-mock-keychain',
+        
+        // Automation detection prevention (Python equivalent)
+        '--disable-blink-features=AutomationControlled',
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor',
+        '--disable-extensions',
+        '--no-first-run',
+        '--disable-default-apps',
+        
+        // Network and performance options
         '--disable-background-networking',
         '--disable-client-side-phishing-detection',
         '--disable-sync',
-        '--disable-features=VizDisplayCompositor,VizHitTestSurfaceLayer',
-        '--run-all-compositor-stages-before-draw',
-        '--disable-threaded-animation',
-        '--disable-threaded-scrolling',
-        '--disable-checker-imaging',
-        '--disable-new-content-rendering-timeout',
-        '--disable-image-animation-resync',
-        '--disable-partial-raster',
-        '--use-gl=swiftshader',
-        '--disable-software-rasterizer',
-        // Additional stability flags
-        '--disable-features=site-per-process',
-        '--disable-site-isolation-trials',
-        '--disable-features=VizDisplayCompositor',
-        '--disable-frame-rate-limit'
+        '--disable-translate',
+        '--hide-scrollbars',
+        '--mute-audio',
+        
+        // Memory and process management
+        '--memory-pressure-off',
+        '--max_old_space_size=4096',
+        
+        // Display and UI options (Python Selenium style)
+        '--disable-infobars',
+        '--disable-notifications',
+        '--disable-save-password-bubble',
+        '--disable-popup-blocking',
+        
+        // Additional stealth options
+        '--disable-features=TranslateUI',
+        '--disable-ipc-flooding-protection',
+        '--disable-hang-monitor',
+        '--disable-prompt-on-repost',
+        '--disable-domain-reliability',
+        '--disable-component-extensions-with-background-pages',
+        
+        // Window management
+        '--window-size=1920,1080',
+        '--start-maximized'
       ],
       timeout: 60000,
-      // Add page error handling
-      ignoreDefaultArgs: ['--disable-extensions'],
-      defaultViewport: null
+      // Python Selenium equivalent settings
+      ignoreDefaultArgs: [
+        '--enable-automation',
+        '--disable-extensions'
+      ],
+      // Set viewport to common desktop resolution (Python Selenium style)
+      defaultViewport: {
+        width: 1920,
+        height: 1080
+      }
     };
 
     // Configure Chrome executable path for different environments
@@ -808,21 +827,42 @@ app.post('/auth/login-new', async (req, res) => {
       }
     });
     
-    // Set realistic user agent
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    // Python Selenium equivalent user agent and headers setup
+    const userAgents = [
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ];
     
-    // Set additional headers to mimic real browser
+    // Randomly select user agent (Python Selenium pattern)
+    const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+    await page.setUserAgent(randomUserAgent);
+    console.log(`[${sessionId}] Using User-Agent: ${randomUserAgent}`);
+    
+    // Python Selenium equivalent headers (comprehensive set)
     await page.setExtraHTTPHeaders({
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
       'Accept-Language': 'en-US,en;q=0.9',
       'Accept-Encoding': 'gzip, deflate, br',
+      'Cache-Control': 'max-age=0',
       'DNT': '1',
       'Connection': 'keep-alive',
       'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+      'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"'
     });
     
-    // Set realistic viewport (common laptop resolution)
-    await page.setViewport({ width: 1366, height: 768 });
+    // Python Selenium equivalent viewport (match browser window size)
+    await page.setViewport({ width: 1920, height: 1080 });
+    
+    // Python Selenium equivalent: set implicit wait and page load timeout
+    page.setDefaultTimeout(30000); // Equivalent to driver.implicitly_wait(30)
+    page.setDefaultNavigationTimeout(45000); // Equivalent to driver.set_page_load_timeout(45)
     
     // Test basic navigation first
     console.log(`[${sessionId}] Testing basic navigation...`);
@@ -848,6 +888,7 @@ app.post('/auth/login-new', async (req, res) => {
         const waitStrategy = navigationAttempts === 1 ? 'networkidle2' : 
                            navigationAttempts === 2 ? 'domcontentloaded' : 'load';
         
+        // Python Selenium equivalent: driver.get() with timeout
         await page.goto('https://www.naukri.com/', { 
           waitUntil: waitStrategy,
           timeout: 30000 
@@ -855,21 +896,34 @@ app.post('/auth/login-new', async (req, res) => {
         
         console.log(`[${sessionId}] Page loaded, current URL: ${page.url()}`);
         
-        // Verify we're on the right page
+        // Python Selenium equivalent: verify current_url
         const currentUrl = page.url();
         if (!currentUrl.includes('naukri.com')) {
           throw new Error(`Unexpected redirect to: ${currentUrl}`);
         }
         
-        // Wait for page to be fully interactive with retry logic
+        // Python Selenium equivalent: WebDriverWait with multiple conditions
         console.log(`[${sessionId}] Waiting for page to be interactive...`);
         let retries = 3;
         while (retries > 0) {
           try {
+            // Wait for DOM to be ready (Python: document.readyState == 'complete')
             await page.waitForFunction(
-              () => document.readyState === 'complete' && window.jQuery,
+              () => document.readyState === 'complete',
               { timeout: 10000 }
             );
+            
+            // Additional check for common JavaScript libraries (Python equivalent)
+            try {
+              await page.waitForFunction(
+                () => window.jQuery || window.$ || document.querySelector('script[src*="jquery"]'),
+                { timeout: 5000 }
+              );
+              console.log(`[${sessionId}] jQuery detected, page fully loaded`);
+            } catch (e) {
+              console.log(`[${sessionId}] No jQuery detected, but DOM is ready`);
+            }
+            
             break;
           } catch (e) {
             retries--;
@@ -881,18 +935,23 @@ app.post('/auth/login-new', async (req, res) => {
           }
         }
         
-        // Simulate human reading/browsing behavior
-        await humanDelay(2000, 4000);
+        // Python Selenium equivalent: implicit wait + human simulation
+        await humanDelay(3000, 5000); // More realistic page load time
         
-        // Simulate some mouse movements to appear more human
-        await page.mouse.move(100, 100);
-        await humanDelay(500, 1000);
-        await page.mouse.move(300, 200);
-        await humanDelay(500, 1000);
-        await page.mouse.move(500, 300);
-        await humanDelay(500, 1000);
+        // Python Selenium equivalent: ActionChains for mouse movement
+        const mouseMovements = [
+          { x: 200, y: 150 },
+          { x: 400, y: 300 },
+          { x: 600, y: 200 },
+          { x: 300, y: 400 }
+        ];
         
-        console.log(`[${sessionId}] Navigation successful, human-like browsing completed`);
+        for (const movement of mouseMovements) {
+          await page.mouse.move(movement.x, movement.y, { steps: 3 });
+          await humanDelay(300, 700);
+        }
+        
+        console.log(`[${sessionId}] Navigation successful, Python Selenium-style browsing completed`);
         break; // Success, exit the retry loop
         
       } catch (navigationError) {
