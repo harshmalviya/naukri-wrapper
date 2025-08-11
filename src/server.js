@@ -146,22 +146,58 @@ const findAndClickElement = async (page, selectors, sessionId, timeout = 20000) 
 const humanType = async (page, selector, text, sessionId, timeout = 15000) => {
   try {
     console.log(`[${sessionId}] Typing into: ${selector}`);
-    await page.waitForSelector(selector, { timeout });
     
-    // Focus the element
-    await page.focus(selector);
-    await humanDelay(200, 500);
+    // Wait for element to be visible and enabled
+    await page.waitForSelector(selector, { 
+      timeout,
+      visible: true 
+    });
+    
+    // Wait for element to be interactive
+    await page.waitForFunction(
+      sel => {
+        const element = document.querySelector(sel);
+        return element && !element.disabled && element.offsetParent !== null;
+      },
+      { timeout: 5000 },
+      selector
+    );
+    
+    // Scroll element into view if needed
+    await page.evaluate(sel => {
+      const element = document.querySelector(sel);
+      if (element) element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, selector);
+    
+    await humanDelay(300, 600);
+    
+    // Focus the element with human-like behavior
+    await page.click(selector);
+    await humanDelay(200, 400);
     
     // Clear existing text
     await page.evaluate(sel => {
       const element = document.querySelector(sel);
-      if (element) element.value = '';
+      if (element) {
+        element.value = '';
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+      }
     }, selector);
+    
+    await humanDelay(100, 300);
     
     // Type with human-like delays between characters
     for (const char of text) {
       await page.type(selector, char, { delay: Math.random() * 150 + 50 });
     }
+    
+    // Trigger change event
+    await page.evaluate(sel => {
+      const element = document.querySelector(sel);
+      if (element) {
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }, selector);
     
     console.log(`[${sessionId}] Finished typing into: ${selector}`);
     return true;
@@ -825,44 +861,111 @@ app.post('/auth/login-new', async (req, res) => {
       throw new Error('Could not click on Jobseeker Login link');
     }
     
-    // Human-like wait for dialog to open
-    await humanDelay(1500, 2500);
+    // Human-like wait for dialog to open and load completely
+    await humanDelay(3000, 5000);
+    
+    // Wait for login form to be visible and interactive
+    console.log(`[${sessionId}] Waiting for login form to load...`);
+    try {
+      // Wait for any login form to appear
+      await page.waitForSelector('.form-row, .login-form, #login-form, .modal-body', { 
+        timeout: 20000,
+        visible: true 
+      });
+      console.log(`[${sessionId}] Login form container found`);
+    } catch (error) {
+      console.log(`[${sessionId}] No standard form container found, continuing...`);
+    }
+    
+    // Additional wait for dynamic content
+    await humanDelay(2000, 3000);
     
     // Take screenshot after clicking login link
     await takeScreenshot(page, '02-after-click', sessionId);
     
-    // Find and fill username field with human-like behavior
-    console.log(`[${sessionId}] Looking for form fields...`);
-    const formRows = await page.$$('.form-row');
+    // Try multiple selectors for username field
+    console.log(`[${sessionId}] Looking for username field...`);
+    const usernameSelectors = [
+      '.form-row:first-child input',
+      '.form-row input[type="text"]',
+      '.form-row input[type="email"]',
+      'input[name="username"]',
+      'input[name="email"]',
+      'input[placeholder*="Email"]',
+      'input[placeholder*="Username"]',
+      'input[id*="username"]',
+      'input[id*="email"]',
+      '.login-form input:first-of-type',
+      '#login-form input:first-of-type',
+      '.modal-body input:first-of-type'
+    ];
     
-    if (formRows.length < 2) {
-      throw new Error('Could not find username and password form fields');
+    let usernameTyped = false;
+    for (const selector of usernameSelectors) {
+      try {
+        console.log(`[${sessionId}] Trying username selector: ${selector}`);
+        usernameTyped = await humanType(page, selector, username, sessionId, 10000);
+        if (usernameTyped) {
+          console.log(`[${sessionId}] Username typed successfully with: ${selector}`);
+          break;
+        }
+      } catch (error) {
+        console.log(`[${sessionId}] Username selector ${selector} failed, trying next...`);
+      }
     }
     
-    // Fill username with human-like typing
-    const usernameInput = await formRows[0].$('input');
-    if (usernameInput) {
-      const usernameSelector = '.form-row:first-child input';
-      const usernameTyped = await humanType(page, usernameSelector, username, sessionId);
-      if (!usernameTyped) {
-        throw new Error('Could not type username');
-      }
-    } else {
+    if (!usernameTyped) {
+      // Take debug screenshot and log available inputs
+      await takeScreenshot(page, '02-username-field-not-found', sessionId);
+      
+      const availableInputs = await page.$$eval('input', inputs => 
+        inputs.map(input => ({
+          type: input.type,
+          name: input.name,
+          id: input.id,
+          className: input.className,
+          placeholder: input.placeholder,
+          visible: input.offsetParent !== null
+        }))
+      );
+      
+      console.log(`[${sessionId}] Available input fields:`, JSON.stringify(availableInputs, null, 2));
       throw new Error('Could not find username input field');
     }
     
     // Human-like delay between fields
-    await humanDelay(500, 1500);
+    await humanDelay(1000, 2000);
     
-    // Fill password with human-like typing
-    const passwordInput = await formRows[1].$('input');
-    if (passwordInput) {
-      const passwordSelector = '.form-row:nth-child(2) input';
-      const passwordTyped = await humanType(page, passwordSelector, password, sessionId);
-      if (!passwordTyped) {
-        throw new Error('Could not type password');
+    // Try multiple selectors for password field
+    console.log(`[${sessionId}] Looking for password field...`);
+    const passwordSelectors = [
+      '.form-row:nth-child(2) input',
+      '.form-row input[type="password"]',
+      'input[name="password"]',
+      'input[placeholder*="Password"]',
+      'input[id*="password"]',
+      '.login-form input[type="password"]',
+      '#login-form input[type="password"]',
+      '.modal-body input[type="password"]',
+      '.form-row:last-child input'
+    ];
+    
+    let passwordTyped = false;
+    for (const selector of passwordSelectors) {
+      try {
+        console.log(`[${sessionId}] Trying password selector: ${selector}`);
+        passwordTyped = await humanType(page, selector, password, sessionId, 10000);
+        if (passwordTyped) {
+          console.log(`[${sessionId}] Password typed successfully with: ${selector}`);
+          break;
+        }
+      } catch (error) {
+        console.log(`[${sessionId}] Password selector ${selector} failed, trying next...`);
       }
-    } else {
+    }
+    
+    if (!passwordTyped) {
+      await takeScreenshot(page, '02-password-field-not-found', sessionId);
       throw new Error('Could not find password input field');
     }
     
@@ -872,10 +975,38 @@ app.post('/auth/login-new', async (req, res) => {
     // Take screenshot before clicking login button
     await takeScreenshot(page, '03-before-login', sessionId);
     
-    // Human-like click on login button
-    const loginButtonClicked = await humanClick(page, 'button.btn-primary.loginButton', sessionId);
+    // Try multiple selectors for login button
+    console.log(`[${sessionId}] Looking for login button...`);
+    const loginButtonSelectors = [
+      'button.btn-primary.loginButton',
+      'button[type="submit"]',
+      '.login-button',
+      '.btn-login',
+      'button:contains("Login")',
+      'input[type="submit"]',
+      '.modal-footer button',
+      '.form-actions button',
+      'button.primary'
+    ];
+    
+    const loginButtonClicked = await findAndClickElement(page, loginButtonSelectors, sessionId, 20000);
     if (!loginButtonClicked) {
-      throw new Error('Could not click login button');
+      // Take debug screenshot and log available buttons
+      await takeScreenshot(page, '03-login-button-not-found', sessionId);
+      
+      const availableButtons = await page.$$eval('button, input[type="submit"]', buttons => 
+        buttons.map(btn => ({
+          type: btn.type,
+          className: btn.className,
+          id: btn.id,
+          text: btn.textContent?.trim(),
+          value: btn.value,
+          visible: btn.offsetParent !== null
+        }))
+      );
+      
+      console.log(`[${sessionId}] Available buttons:`, JSON.stringify(availableButtons, null, 2));
+      throw new Error('Could not find login button');
     }
     
     // Wait for login to complete - look for redirect or success indicators
